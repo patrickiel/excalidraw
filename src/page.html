@@ -1,0 +1,218 @@
+<!doctype html>
+<!--
+  A drawing's Preview: Excalidraw, from esm.sh, on the file the server serves
+  at `scene` beside this page. Each change is written back a moment after the
+  last one, and `stat` is asked every second for a change on disk and for the
+  Theme setting. Nothing is written until the user draws, so looking at a
+  drawing never changes its file.
+-->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Excalidraw</title>
+<link rel="icon" href="data:,">
+<link rel="stylesheet" href="https://esm.sh/@excalidraw/excalidraw@0.18.1/dist/prod/index.css">
+<script>
+  // Saved in the file as where it was drawn: this page's address changes
+  // each time den starts.
+  window.EXCALIDRAW_EXPORT_SOURCE = "https://excalidraw.com";
+</script>
+<script type="importmap">
+{
+  "imports": {
+    "react": "https://esm.sh/react@19.3.0",
+    "react/jsx-runtime": "https://esm.sh/react@19.3.0/jsx-runtime",
+    "react-dom": "https://esm.sh/react-dom@19.3.0",
+    "react-dom/client": "https://esm.sh/react-dom@19.3.0/client"
+  }
+}
+</script>
+<style>
+  html, body, #app { margin: 0; height: 100%; overflow: hidden; }
+  body { background: #fff; font: 13px system-ui, sans-serif; }
+  @media (prefers-color-scheme: dark) { body { background: #121212; } }
+  #note {
+    position: fixed; left: 50%; bottom: 64px; transform: translateX(-50%); z-index: 10;
+    box-sizing: border-box; max-width: calc(100% - 32px); padding: 6px 12px; border-radius: 6px;
+    background: #333; color: #eee;
+  }
+  #note[hidden] { display: none; }
+  #note.center { top: 50%; bottom: auto; transform: translate(-50%, -50%); background: none; color: #888; text-align: center; }
+</style>
+</head>
+<body>
+<div id="app"></div>
+<div id="note" class="center">Loading Excalidraw…</div>
+<script type="module">
+const EXCALIDRAW = "https://esm.sh/@excalidraw/excalidraw@0.18.1?external=react,react-dom";
+// The drawing's name, for the images it exports.
+const NAME = {{name}};
+// How long after the last change the file is written.
+const SAVE_DELAY = 300;
+// How often the file is checked for a change on disk.
+const POLL = 1000;
+
+const noteElement = document.getElementById("note");
+// A line over the drawing; `center` stands in for it while there is none.
+function note(text, center = false) {
+  noteElement.textContent = text;
+  noteElement.hidden = !text;
+  noteElement.classList.toggle("center", center);
+}
+
+let React, ReactDOM, Lib;
+try {
+  [React, ReactDOM, Lib] = await Promise.all([import("react"), import("react-dom/client"), import(EXCALIDRAW)]);
+} catch (err) {
+  note(`Excalidraw couldn't be loaded from esm.sh (${err.message}). It needs the internet the first time.`, true);
+  throw err;
+}
+const { Excalidraw, restore, serializeAsJSON, hashElementsVersion } = Lib;
+
+let api = null;           // Excalidraw's, once it shows
+let root = null;
+let scene = null;         // what it started with
+let themeSetting = null;  // system, light or dark
+let stamp = null;         // the file's, as last read or written
+let saved = null;         // the file's text, as last read or written
+let readable = false;     // the file on disk is a drawing; until it is again, nothing is written over it
+let touched = false;      // the user drew here
+let savedKey = "";        // `key` of the scene as last read or written
+let timer = 0;            // a write waiting for changes to stop
+let queue = Promise.resolve();  // reads and writes, one at a time, in order
+
+const media = matchMedia("(prefers-color-scheme: dark)");
+const theme = () => themeSetting === "system" || !themeSetting ? (media.matches ? "dark" : "light") : themeSetting;
+media.addEventListener("change", render);
+
+// What changes when the saved scene does, cheaply: the elements' versions and
+// the settings Excalidraw saves with them.
+const key = (elements, appState, files) =>
+  [hashElementsVersion(elements), elements.length, appState.viewBackgroundColor, appState.gridSize,
+   appState.gridStep, appState.gridModeEnabled, Object.keys(files).length].join(" ");
+const savedState = ({ viewBackgroundColor, gridSize, gridStep, gridModeEnabled }) =>
+  ({ viewBackgroundColor, gridSize, gridStep, gridModeEnabled });
+
+function enqueue(job) {
+  queue = queue.then(job).catch((err) => note(String(err)));
+}
+
+function render() {
+  if (!scene) return;
+  root ??= ReactDOM.createRoot(document.getElementById("app"));
+  root.render(React.createElement(Excalidraw, {
+    initialData: scene,
+    excalidrawAPI: (instance) => { api = instance; },
+    onChange,
+    theme: theme(),
+    name: NAME,
+    // The file is the drawing: no opening or saving others from here.
+    UIOptions: { canvasActions: { loadScene: false, saveToActiveFile: false, export: false } },
+  }));
+}
+
+// An empty file is an empty drawing.
+function parse(text) {
+  if (!text.trim()) return restore(null, null, null);
+  const data = JSON.parse(text);
+  if (data?.type !== "excalidraw") throw new Error("it isn't an Excalidraw drawing");
+  return restore(data, null, null, { repairBindings: true, refreshDimensions: false });
+}
+
+// Show what the file holds now, unless it is what shows already.
+async function load() {
+  let file;
+  try {
+    const response = await fetch("scene", { cache: "no-store" });
+    file = { text: await response.text(), stamp: response.headers.get("X-Stamp") };
+    if (!response.ok) throw new Error(file.text);
+  } catch (err) {
+    return note(`Can't read the file: ${err.message}`, !scene);
+  }
+  if (file.stamp === stamp) return;
+  stamp = file.stamp;
+  if (file.text === saved) return;
+  let next;
+  try {
+    next = parse(file.text);
+  } catch (err) {
+    readable = false;
+    return note(`Not a drawing Excalidraw can read (${err.message}). Fix it in Source; it shows here once saved.`, !scene);
+  }
+  readable = true;
+  saved = file.text;
+  savedKey = key(next.elements, next.appState, next.files);
+  note("");
+  if (!scene) {
+    scene = { ...next, scrollToContent: true };
+    return render();
+  }
+  if (!api) {
+    // Still starting: try again on the next check.
+    stamp = null;
+    return;
+  }
+  api.updateScene({ elements: next.elements, appState: savedState(next.appState) });
+  api.addFiles(Object.values(next.files));
+}
+
+async function write() {
+  if (!api || !readable) return;
+  const elements = api.getSceneElementsIncludingDeleted(), appState = api.getAppState(), files = api.getFiles();
+  savedKey = key(elements, appState, files);
+  const text = serializeAsJSON(elements, appState, files, "local");
+  if (text === saved) return;
+  try {
+    const response = await fetch("scene", { method: "PUT", body: text });
+    const answer = await response.text();
+    if (!response.ok) throw new Error(answer);
+    saved = text;
+    stamp = answer;
+    note("");
+  } catch (err) {
+    note(`Not saved: ${err.message}`);
+  }
+}
+
+function save() {
+  clearTimeout(timer);
+  timer = 0;
+  enqueue(write);
+}
+
+function onChange(elements, appState, files) {
+  if (!touched || !readable || key(elements, appState, files) === savedKey) return;
+  clearTimeout(timer);
+  timer = setTimeout(save, SAVE_DELAY);
+}
+
+for (const type of ["pointerdown", "keydown", "paste", "cut", "drop"]) {
+  addEventListener(type, () => { touched = true; }, true);
+}
+// Ctrl+S writes now; there is no other file to save to.
+addEventListener("keydown", (event) => {
+  if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "s") {
+    event.preventDefault();
+    event.stopImmediatePropagation();
+    save();
+  }
+}, true);
+
+async function poll() {
+  try {
+    const stat = await (await fetch("stat", { cache: "no-store" })).json();
+    if (stat.theme !== themeSetting) {
+      themeSetting = stat.theme;
+      render();
+    }
+    if (stat.stamp !== stamp && !timer) enqueue(load);
+  } catch {
+    // den is quitting, or started again with a new server.
+  }
+  setTimeout(poll, POLL);
+}
+poll();
+</script>
+</body>
+</html>

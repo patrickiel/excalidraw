@@ -1,0 +1,15 @@
+{
+  "id": "excalidraw",
+  "name": "Excalidraw",
+  "version": "0.1.0",
+  "repository": "patrickiel/excalidraw",
+  "api": 1,
+  "icon": "icon.svg",
+  "description": "Excalidraw drawings in den: a .excalidraw file's Preview is Excalidraw itself, saving each change to the file.",
+  "settings": [
+    { "key": "theme", "title": "Theme", "description": "Light or dark drawings; system follows Windows or macOS.", "type": "choice", "default": "system", "options": ["system", "light", "dark"] }
+  ],
+  "commands": [
+    { "id": "new", "title": "New Drawing" }
+  ]
+}
