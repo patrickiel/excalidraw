@@ -1,14 +1,14 @@
 //! Excalidraw for den: a `.excalidraw` file's tab offers Preview beside
-//! Source, a file view whose page is Excalidraw itself, drawing straight
-//! into the file.
+//! Source, a file view that opens Excalidraw itself in the browser, drawing
+//! straight into the file.
 //!
 //! The page is served by a small HTTP server of the extension's own
 //! (`server.rs`), on a free port of 127.0.0.1 and under a path no other page
 //! can guess. It loads Excalidraw from esm.sh, reads the file through the
 //! server and writes each change back; it asks every second whether the file
 //! changed on disk (saved in Source, `git checkout`) and shows that. The
-//! extension itself only offers the view, points each tab's page at its file,
-//! and makes new drawings, so it needs no worker thread.
+//! extension itself only offers the view, opens each file's page, and makes
+//! new drawings, so it needs no worker thread.
 
 mod server;
 
@@ -98,11 +98,7 @@ impl Extension for Excalidraw {
             events::FILE_VIEW_SHOWN if text("view") == VIEW => {
                 let path = text("path");
                 let url = server.page_url(Path::new(path));
-                // A page already showing it keeps its undo history; one from
-                // before a restart points at a server that is gone.
-                if data["url"].as_str() != Some(url.as_str())
-                    && let Err(err) = self.host.load_file_view(root, path, VIEW, &url)
-                {
+                if let Err(err) = self.host.load_file_view(root, path, VIEW, &url) {
                     self.host.log(format!("load_file_view: {err}"));
                 }
             }
