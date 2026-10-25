@@ -12,7 +12,7 @@
 
 | Setting | |
 | --- | --- |
-| **Theme** | `system` (follows Windows or macOS), `light` or `dark` |
+| **Theme** | `system` (follows the system's light or dark mode), `light` or `dark` |
 
 ## Good to know
 
